@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Operator Dashboard</title>
+</head>
+<body>
+    <h1>Operator Dashboard</h1>
+    <table>
+        <tr>
+            <th>Bearing ID</th>
+            <th>Health Score</th>
+            <th>Status</th>
+        </tr>
+        {% for bearing in bearings %}
+        <tr>
+            <td><a href="/bearing/{{ bearing.id }}">{{ bearing.id }}</a></td>
+            <td>{{ bearing.score }}</td>
+            <td>{{ bearing.status }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>
