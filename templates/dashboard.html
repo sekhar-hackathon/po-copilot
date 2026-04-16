@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Operator Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        .score { margin: 20px; padding: 10px; border: 1px solid #ccc; }
+        .indicator { font-weight: bold; }
+    </style>
+    <script>
+        async function fetchHealthScores() {
+            const response = await fetch('/api/health_scores');
+            const data = await response.json();
+            const scoresDiv = document.getElementById('scores');
+            scoresDiv.innerHTML = '';
+            for (const [bearing, score] of Object.entries(data.scores)) {
+                const indicator = score > 70 ? 'Good' : score > 40 ? 'Warning' : 'Critical';
+                scoresDiv.innerHTML += `<div class="score">${bearing}: ${score.toFixed(2)} - <span class="indicator">${indicator}</span></div>`;
+            }
+        }
+        setInterval(fetchHealthScores, 2000);
+    </script>
+</head>
+<body>
+    <h1>Operator Dashboard</h1>
+    <div id="scores">Loading...</div>
+</body>
+</html>
