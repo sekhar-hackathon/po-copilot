@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bearing Health Dashboard</title>
+    <style>
+        .green { background-color: #4CAF50; color: white; }
+        .yellow { background-color: #FFEB3B; color: black; }
+        .red { background-color: #F44336; color: white; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+    </style>
+</head>
+<body>
+    <h1>Bearing Health Dashboard</h1>
+    {% for plant, bearings in data.items() %}
+    <h2>{{ plant }}</h2>
+    <table>
+        <tr>
+            <th>Bearing</th>
+            <th>Health Score</th>
+        </tr>
+        {% for bearing, details in bearings.items() %}
+        <tr class="{{ details.color }}">
+            <td>{{ bearing }}</td>
+            <td>{{ details.score }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% endfor %}
+</body>
+</html>
