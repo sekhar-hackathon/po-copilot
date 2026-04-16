@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.js"></script>
+    <style>
+        .green { background-color: #4CAF50; }
+        .yellow { background-color: #FFEB3B; }
+        .red { background-color: #F44336; }
+    </style>
+</head>
+<body>
+    <h1>Real-time Bearing Health Dashboard</h1>
+    <div id="dashboard"></div>
+    <script>
+        const socket = io();
+
+        function getColor(score) {
+            if (score > 70) return 'green';
+            if (score > 40) return 'yellow';
+            return 'red';
+        }
+
+        function updateDashboard(data) {
+            const dashboard = document.getElementById('dashboard');
+            dashboard.innerHTML = '';
+            data.forEach(item => {
+                const div = document.createElement('div');
+                div.className = getColor(item.score);
+                div.innerHTML = `Plant: ${item.plant}, Bearing ID: ${item.bearing_id}, Score: ${item.score}`;
+                dashboard.appendChild(div);
+            });
+        }
+
+        socket.on('initial_data', (data) => {
+            updateDashboard(data);
+        });
+
+        socket.on('update_data', (data) => {
+            updateDashboard(data);
+        });
+
+        setInterval(() => {
+            socket.emit('request_update');
+        }, 5000);
+    </script>
+</body>
+</html>
