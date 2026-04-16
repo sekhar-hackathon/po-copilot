@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bearing Detail</title>
+</head>
+<body>
+    <h1>Bearing Detail</h1>
+    <p><strong>Bearing ID:</strong> {{ bearing.bearing_id }}</p>
+    <p><strong>Health Score:</strong> {{ bearing.health_score }}</p>
+    <a href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+</body>
+</html>
