@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+node_modules/
+chroma_data/
+uploads/
+.venv/
+build/
+dist/
