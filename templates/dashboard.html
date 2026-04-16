@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Operator Dashboard</title>
+</head>
+<body>
+    <h1>Dashboard for {{ plant }}</h1>
+    <ul>
+        {% for bearing, data in bearings.items() %}
+        <li>
+            <strong>{{ bearing }}</strong>: Health Score - {{ data.health_score }}
+            <a href="/details/{{ plant }}/{{ bearing }}">Details</a>
+        </li>
+        {% endfor %}
+    </ul>
+    <form action="/" method="get">
+        <label for="plant">Select Plant:</label>
+        <select name="plant" id="plant">
+            {% for plant_name in bearings_data.keys() %}
+            <option value="{{ plant_name }}" {% if plant_name == plant %}selected{% endif %}>{{ plant_name }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit">Switch Plant</button>
+    </form>
+</body>
+</html>
