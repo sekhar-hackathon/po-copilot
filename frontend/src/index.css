@@ -9,3 +9,14 @@
 .animate-slide-up {
   animation: slide-up 0.3s ease-out;
 }
+
+@keyframes progress-bar {
+  0% { width: 10%; }
+  30% { width: 40%; }
+  60% { width: 65%; }
+  80% { width: 80%; }
+  100% { width: 95%; }
+}
+.animate-progress {
+  animation: progress-bar 8s ease-out forwards;
+}
