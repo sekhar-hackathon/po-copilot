@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bearing Health Dashboard</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        .plant { margin-bottom: 20px; }
+        .bearing { margin-left: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Bearing Health Dashboard</h1>
+    <div id="dashboard"></div>
+
+    <script>
+        function loadDashboard() {
+            $.getJSON('/api/bearings', function(data) {
+                let dashboard = $('#dashboard');
+                dashboard.empty();
+                $.each(data, function(plant, bearings) {
+                    let plantDiv = $('<div class="plant"></div>').append(`<h2>${plant}</h2>`);
+                    $.each(bearings, function(bearing, details) {
+                        let bearingDiv = $('<div class="bearing"></div>').append(
+                            `<p>${bearing}: Health Score - ${details.health_score}</p>`
+                        );
+                        plantDiv.append(bearingDiv);
+                    });
+                    dashboard.append(plantDiv);
+                });
+            });
+        }
+
+        $(document).ready(function() {
+            loadDashboard();
+            setInterval(loadDashboard, 5000); // Refresh every 5 seconds
+        });
+    </script>
+</body>
+</html>
