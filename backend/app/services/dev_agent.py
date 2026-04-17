@@ -216,16 +216,41 @@ class DevAgent:
 
         # 4. Open PR
         pr_title = f"🤖 [{ticket['type']}] {ticket['title']}"
+
+        # Build ticket details section (like AD#1234 references)
+        ticket_details = (
+            f"| Field | Value |\n"
+            f"|-------|-------|\n"
+            f"| **Type** | {ticket['type']} |\n"
+            f"| **Title** | {ticket['title']} |\n"
+        )
+        if ticket.get("parent_title"):
+            ticket_details += f"| **Parent** | {ticket['parent_title']} |\n"
+        if ticket.get("acceptance_criteria"):
+            ticket_details += f"| **Acceptance Criteria** | {ticket['acceptance_criteria']} |\n"
+        if ticket.get("story_points"):
+            ticket_details += f"| **Story Points** | {ticket['story_points']} |\n"
+        if ticket.get("tags"):
+            ticket_details += f"| **Tags** | {', '.join(ticket['tags'])} |\n"
+
         pr_body_full = (
             f"## 🤖 AI Agent Implementation\n\n"
-            f"**Ticket**: {ticket['title']}\n"
-            f"**Type**: {ticket['type']}\n\n"
+            f"### 📋 Ticket Details\n\n"
+            f"{ticket_details}\n"
+            f"> **Description**: {ticket.get('description', 'N/A')}\n\n"
             f"---\n\n"
+            f"### 🔗 Hierarchy\n\n"
+            f"- **Parent**: {ticket.get('parent_title', 'None (top-level)')}\n"
+            f"- **Type**: {ticket['type']}\n"
+            f"- **Ticket**: {ticket['title']}\n\n"
+            f"---\n\n"
+            f"### 📝 Implementation Summary\n\n"
             f"{pr_body}\n\n"
             f"---\n\n"
-            f"### Files Changed\n"
+            f"### 📁 Files Changed\n\n"
             + "\n".join(f"- `{f['path']}` — {f.get('description', '')}" for f in files)
-            + "\n\n*This PR was automatically created by PO Copilot AI Dev Agent.*"
+            + "\n\n---\n\n"
+            f"*🤖 This PR was automatically created by **PO Copilot AI Dev Agent** — Team Diamond × SKF*"
         )
 
         pr = self._create_pr(branch_name, pr_title, pr_body_full, default_branch)

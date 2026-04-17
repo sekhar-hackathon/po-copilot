@@ -20,7 +20,9 @@ from app.services.ai_mapper import AIMapper
 from app.services.ado_client import ADOClient
 from app.services.dev_agent import DevAgent
 
-app = FastAPI(title="PO Copilot", version="1.0.0")
+APP_VERSION = "0.1.0"
+
+app = FastAPI(title="PO Copilot", version=APP_VERSION)
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,7 +45,7 @@ ALLOWED_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".txt", ".md", ".csv"}
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "version": APP_VERSION}
 
 
 @app.post("/api/upload/{project_id}", response_model=UploadResponse)

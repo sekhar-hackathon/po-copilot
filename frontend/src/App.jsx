@@ -26,6 +26,14 @@ export default function App() {
   }, []);
   const clearToast = useCallback(() => setToast({ message: null, variant: "error" }), []);
 
+  const handleReset = () => {
+    setHierarchy(null);
+    setUploadCount(0);
+    setSyncResult(null);
+    setActiveStep(0);
+    showToast("Reset complete — start fresh!", "info");
+  };
+
   const handleUploadSuccess = () => {
     setUploadCount((c) => c + 1);
   };
@@ -134,6 +142,14 @@ export default function App() {
               <h1 className="sm:hidden text-base font-bold bg-gradient-to-r from-blue-700 to-indigo-600 bg-clip-text text-transparent">
                 PO Copilot
               </h1>
+            </div>
+
+            {/* Team Diamond Badge */}
+            <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-sky-50 to-blue-50 border border-blue-200 rounded-full">
+              <span className="text-sm">💎</span>
+              <span className="text-[10px] font-bold text-blue-700 tracking-wide">TEAM DIAMOND</span>
+              <span className="text-[9px] text-blue-400 font-medium">× SKF</span>
+              <span className="text-[9px] text-blue-300 font-mono">v0.1</span>
             </div>
 
             {/* Project Selector */}
@@ -313,6 +329,15 @@ export default function App() {
                 </svg>
                 Regenerate
               </button>
+              <button
+                onClick={handleReset}
+                className="self-start text-sm text-red-400 hover:text-red-600 flex items-center gap-1 transition-colors ml-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Reset All
+              </button>
             </div>
             <TicketPreview
               hierarchy={hierarchy}
@@ -329,9 +354,13 @@ export default function App() {
       {/* Footer — always at bottom */}
       <footer className="mt-auto border-t border-slate-200 bg-white/60 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between text-[10px] sm:text-xs text-slate-400">
-          <span>PO Copilot — Hackathon 2026</span>
-          <span className="hidden sm:inline">Powered by OpenAI + Azure DevOps</span>
-          <span className="sm:hidden">OpenAI + ADO</span>
+          <span>PO Copilot v0.1 — Hackathon 2026</span>
+          <span className="hidden sm:flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-full text-blue-600 font-semibold">💎 Team Diamond</span>
+            <span>•</span>
+            <span>SKF Powered</span>
+          </span>
+          <span className="sm:hidden">💎 v0.1</span>
         </div>
       </footer>
     </div>

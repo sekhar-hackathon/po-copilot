@@ -32,7 +32,7 @@ const COLUMNS = [
 ];
 
 /* ─── Work Item Card ─── */
-function Card({ item, onEdit, onRemove, onAssignAgent, agentState, onMoveTo, githubConfigured }) {
+function Card({ item, onEdit, onRemove, onAssignAgent, onStopAgent, agentState, onMoveTo, githubConfigured }) {
   const [editing, setEditing] = useState(false);
   const [editData, setEditData] = useState({ ...item });
   const st = agentState || "idle";
@@ -84,9 +84,22 @@ function Card({ item, onEdit, onRemove, onAssignAgent, agentState, onMoveTo, git
 
       {/* Body */}
       <div className="px-3 pb-2">
+        <div className="flex items-center gap-1.5 mb-0.5">
+          {item._ticketId && <span className="text-[9px] font-mono font-bold text-slate-400">{item._ticketId}</span>}
+          {item._parentId && (
+            <span className="text-[9px] text-indigo-400 font-medium flex items-center gap-0.5" title={`Child of ${item.parent_title}`}>
+              ↳ {item._parentId}
+            </span>
+          )}
+        </div>
         <h4 className="text-[13px] font-semibold text-slate-900 leading-snug">{item.title}</h4>
         <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-2 leading-relaxed">{item.description}</p>
-        {item.parent_title && <p className="text-[10px] text-slate-400 mt-1 truncate">↳ {item.parent_title}</p>}
+        {item.parent_title && (
+          <p className="text-[10px] text-indigo-400 mt-1 truncate flex items-center gap-1">
+            <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
+            {item.parent_title}
+          </p>
+        )}
       </div>
 
       {/* Tags */}
@@ -108,6 +121,11 @@ function Card({ item, onEdit, onRemove, onAssignAgent, agentState, onMoveTo, git
             {st === "idle" && githubConfigured && (
               <button onClick={onAssignAgent} className="px-2 py-0.5 rounded bg-violet-600 text-white text-[9px] font-bold hover:bg-violet-700 transition-colors">
                 START
+              </button>
+            )}
+            {(st === "working" || st === "queued") && (
+              <button onClick={onStopAgent} className="px-2 py-0.5 rounded bg-red-600 text-white text-[9px] font-bold hover:bg-red-700 transition-colors">
+                STOP
               </button>
             )}
           </div>
@@ -181,6 +199,8 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
   const [agentStates, setAgentStates] = useState({}); // key -> idle|queued|working|done|failed
   const [agentLog, setAgentLog] = useState([]);
   const [gh, setGh] = useState(null);
+  const [abortControllers, setAbortControllers] = useState({}); // key -> AbortController
+  const [stoppingAll, setStoppingAll] = useState(false);
 
   useEffect(() => {
     getGitHubStatus().then(setGh).catch(() => setGh({ configured: false }));
@@ -207,10 +227,21 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
   const enriched = allItems.map((item, idx) => ({
     ...item,
     _gi: idx,
+    _ticketId: `PC-${idx + 1}`,
     _column: ticketColumns[key(item)] || "backlog",
     _gh_owner: gh?.owner,
     _gh_repo: gh?.repo,
   }));
+
+  // Build parent-child lookup for hierarchy display
+  enriched.forEach((item) => {
+    if (item.parent_title) {
+      const parent = enriched.find((p) => p.title === item.parent_title);
+      if (parent) {
+        item._parentId = parent._ticketId;
+      }
+    }
+  });
 
   const colItems = (colId) => enriched.filter((i) => i._column === colId);
 
@@ -227,12 +258,15 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
       return;
     }
     const k = key(item);
+    const controller = new AbortController();
+    setAbortControllers((p) => ({ ...p, [k]: controller }));
     setAgentStates((p) => ({ ...p, [k]: "queued" }));
     moveTo(item, "assigned");
     addLog(`🎯 Agent assigned to: ${item.title}`);
 
     // Brief delay to show queued state
     await new Promise((r) => setTimeout(r, 500));
+    if (controller.signal.aborted) return;
 
     setAgentStates((p) => ({ ...p, [k]: "working" }));
     moveTo(item, "in-progress");
@@ -248,6 +282,11 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
         parent_title: item.parent_title,
         tags: item.tags,
       });
+
+      if (controller.signal.aborted) {
+        addLog(`⏹ Agent stopped for: ${item.title}`, "info");
+        return;
+      }
 
       if (result.status === "success") {
         onUpdate(item._gi, {
@@ -268,21 +307,71 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
         showToast?.(result.message || "Agent failed", "error");
       }
     } catch (err) {
+      if (controller.signal.aborted) {
+        addLog(`⏹ Agent stopped for: ${item.title}`, "info");
+        return;
+      }
       setAgentStates((p) => ({ ...p, [k]: "failed" }));
       moveTo(item, "backlog");
       addLog(`❌ Error: ${err.response?.data?.detail || err.message}`, "error");
       showToast?.(err.response?.data?.detail || "Agent failed", "error");
+    } finally {
+      setAbortControllers((p) => { const c = { ...p }; delete c[k]; return c; });
     }
+  };
+
+  const handleStopAgent = (item) => {
+    const k = key(item);
+    const ctrl = abortControllers[k];
+    if (ctrl) ctrl.abort();
+    setAgentStates((p) => ({ ...p, [k]: "idle" }));
+    moveTo(item, "backlog");
+    addLog(`⏹ Agent stopped for: ${item.title}`, "info");
+    showToast?.(`Stopped agent for: ${item.title}`, "info");
+  };
+
+  const handleStopAll = () => {
+    setStoppingAll(true);
+    Object.values(abortControllers).forEach((c) => c.abort());
+    setAbortControllers({});
+    // Reset all working/queued to idle
+    setAgentStates((prev) => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (next[k] === "working" || next[k] === "queued") next[k] = "idle";
+      }
+      return next;
+    });
+    setTicketColumns((prev) => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (next[k] === "in-progress" || next[k] === "assigned") next[k] = "backlog";
+      }
+      return next;
+    });
+    addLog(`🛡️ All agents stopped`, "info");
+    showToast?.("All agents stopped", "info");
+    setTimeout(() => setStoppingAll(false), 500);
+  };
+
+  const handleResetBoard = () => {
+    setTicketColumns({});
+    setAgentStates({});
+    setAgentLog([]);
+    setAbortControllers({});
+    showToast?.("Board reset", "info");
   };
 
   const handleAssignAll = async () => {
     const candidates = agentableItems.filter((i) => !agentStates[key(i)] || agentStates[key(i)] === "idle" || agentStates[key(i)] === "failed");
     if (candidates.length === 0) { showToast?.("No tickets to assign", "info"); return; }
     addLog(`🚀 Batch assign: ${candidates.length} tickets to AI agents`);
+    setStoppingAll(false);
     for (const item of candidates) {
+      if (stoppingAll) break;
       await handleAssignAgent(item);
     }
-    addLog(`🏁 All agents finished`, "success");
+    if (!stoppingAll) addLog(`🏁 All agents finished`, "success");
   };
 
   return (
@@ -353,6 +442,20 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
               🤖 Assign All Agents
             </button>
 
+            {/* Stop All */}
+            {workingCount > 0 && (
+              <button onClick={handleStopAll}
+                className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-[11px] font-semibold hover:bg-red-700 transition-all flex items-center gap-1.5 animate-pulse">
+                ⏹ Stop All
+              </button>
+            )}
+
+            {/* Reset Board */}
+            <button onClick={handleResetBoard}
+              className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-[11px] font-medium hover:bg-slate-200 transition-colors flex items-center gap-1.5 border border-slate-200">
+              🔄 Reset
+            </button>
+
             {/* Open GitHub */}
             {gh?.configured && (
               <a href={`https://github.com/${gh.owner}/${gh.repo}/pulls`} target="_blank" rel="noopener noreferrer"
@@ -401,6 +504,7 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
                       onEdit={(data) => onUpdate(item._gi, data)}
                       onRemove={() => onRemove(item._gi)}
                       onAssignAgent={() => handleAssignAgent(item)}
+                      onStopAgent={() => handleStopAgent(item)}
                       agentState={agentStates[key(item)] || "idle"}
                       onMoveTo={(col) => moveTo(item, col)}
                       githubConfigured={gh?.configured}
@@ -424,13 +528,11 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
                 {group.items.map((item, idx) => {
-                  let gi = 0;
-                  for (const g of groups) { if (g.type === group.type) { gi += idx; break; } gi += g.items.length; }
-                  const e = { ...item, _gi: gi, _column: ticketColumns[key(item)] || "backlog", _gh_owner: gh?.owner, _gh_repo: gh?.repo };
+                  const e = enriched.find((en) => en.type === item.type && en.title === item.title) || { ...item, _gi: idx, _column: "backlog" };
                   return (
                     <Card key={key(e)} item={e}
-                      onEdit={(d) => onUpdate(gi, d)} onRemove={() => onRemove(gi)}
-                      onAssignAgent={() => handleAssignAgent(e)} agentState={agentStates[key(e)] || "idle"}
+                      onEdit={(d) => onUpdate(e._gi, d)} onRemove={() => onRemove(e._gi)}
+                      onAssignAgent={() => handleAssignAgent(e)} onStopAgent={() => handleStopAgent(e)} agentState={agentStates[key(e)] || "idle"}
                       onMoveTo={(c) => moveTo(e, c)} githubConfigured={gh?.configured} />
                   );
                 })}
