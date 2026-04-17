@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Operator Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        .plant { margin-bottom: 20px; }
+        .bearing { margin-left: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Operator Dashboard</h1>
+    {% for plant, bearings in health_scores.items() %}
+    <div class="plant">
+        <h2>{{ plant }}</h2>
+        {% for bearing, score in bearings.items() %}
+        <div class="bearing">
+            <strong>{{ bearing }}:</strong> {{ score }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+</body>
+</html>
