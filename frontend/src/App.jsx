@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import FileUpload from "./components/FileUpload";
 import TicketPreview from "./components/TicketPreview";
 import ProjectSelector from "./components/ProjectSelector";
@@ -14,12 +14,25 @@ const STEPS = [
 export default function App() {
   const [projectId, setProjectId] = useState("");
   const [activeStep, setActiveStep] = useState(0);
-  const [hierarchy, setHierarchy] = useState(null);
+  const [hierarchy, setHierarchy] = useState(() => {
+    try { const v = localStorage.getItem("poc_hierarchy"); return v ? JSON.parse(v) : null; } catch { return null; }
+  });
   const [generating, setGenerating] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState(null);
   const [uploadCount, setUploadCount] = useState(0);
   const [toast, setToast] = useState({ message: null, variant: "error" });
+
+  // Persist hierarchy to localStorage
+  useEffect(() => {
+    if (hierarchy) localStorage.setItem("poc_hierarchy", JSON.stringify(hierarchy));
+    else localStorage.removeItem("poc_hierarchy");
+  }, [hierarchy]);
+
+  // Auto-advance to board if we loaded hierarchy from localStorage
+  useEffect(() => {
+    if (hierarchy && activeStep === 0) setActiveStep(2);
+  }, []);
 
   const showToast = useCallback((message, variant = "error") => {
     setToast({ message, variant });
@@ -31,6 +44,7 @@ export default function App() {
     setUploadCount(0);
     setSyncResult(null);
     setActiveStep(0);
+    localStorage.removeItem("poc_hierarchy");
     showToast("Reset complete — start fresh!", "info");
   };
 
@@ -149,7 +163,7 @@ export default function App() {
               <span className="text-sm">💎</span>
               <span className="text-[10px] font-bold text-blue-700 tracking-wide">TEAM DIAMOND</span>
               <span className="text-[9px] text-blue-400 font-medium">× SKF</span>
-              <span className="text-[9px] text-blue-300 font-mono">v0.1</span>
+              <span className="text-[9px] text-blue-300 font-mono">v0.2</span>
             </div>
 
             {/* Project Selector */}
@@ -354,13 +368,13 @@ export default function App() {
       {/* Footer — always at bottom */}
       <footer className="mt-auto border-t border-slate-200 bg-white/60 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between text-[10px] sm:text-xs text-slate-400">
-          <span>PO Copilot v0.1 — Hackathon 2026</span>
+          <span>PO Copilot v0.2 — Hackathon 2026</span>
           <span className="hidden sm:flex items-center gap-1.5">
             <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-full text-blue-600 font-semibold">💎 Team Diamond</span>
             <span>•</span>
             <span>SKF Powered</span>
           </span>
-          <span className="sm:hidden">💎 v0.1</span>
+          <span className="sm:hidden">💎 v0.2</span>
         </div>
       </footer>
     </div>

@@ -20,7 +20,7 @@ from app.services.ai_mapper import AIMapper
 from app.services.ado_client import ADOClient
 from app.services.dev_agent import DevAgent
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 
 app = FastAPI(title="PO Copilot", version=APP_VERSION)
 
@@ -158,10 +158,34 @@ async def run_agent(req: AgentRequest):
             detail="GitHub token not configured. Set GITHUB_TOKEN in .env",
         )
     try:
-        result = dev_agent.execute(req.ticket)
+        result = dev_agent.execute(req.ticket, req.all_tickets)
         return AgentResult(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent failed: {str(e)}")
+
+
+@app.get("/api/github/prs")
+async def list_github_prs():
+    """List open and recently closed PRs from the repo."""
+    if not settings.github_token:
+        raise HTTPException(status_code=400, detail="GitHub token not configured.")
+    try:
+        prs = dev_agent.list_prs()
+        return {"prs": prs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch PRs: {str(e)}")
+
+
+@app.get("/api/github/repo-context")
+async def get_repo_context():
+    """Get repo analysis: file tree, recent PRs, branches."""
+    if not settings.github_token:
+        raise HTTPException(status_code=400, detail="GitHub token not configured.")
+    try:
+        context = dev_agent.get_repo_context()
+        return context
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get repo context: {str(e)}")
 
 
 @app.delete("/api/projects/{project_id}/context")

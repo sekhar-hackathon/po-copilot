@@ -1,20 +1,27 @@
 """
-AI Dev Agent — takes a work item ticket, generates code using LLM,
-creates a feature branch on GitHub, commits files, and opens a PR.
+AI Dev Agent v0.2 — Enhanced with repo context, PR history,
+parent/child ticket awareness, and code navigation.
 """
 
 import json
 import re
-import base64
+import time
 import httpx
 import truststore
 from openai import OpenAI
 from app.config import settings
 
-CODE_GEN_PROMPT = """You are a senior software engineer AI agent. You have been assigned a ticket
-from a product backlog. Your job is to implement the ticket by generating production-ready code.
+CODE_GEN_PROMPT = """You are a senior software engineer AI agent working on the repository "{owner}/{repo}".
+You have been assigned a ticket from a product backlog. Your job is to implement the ticket by generating production-ready code.
 
-Given the ticket details, generate the code files needed to implement the requirement.
+## Repository Context
+{repo_context}
+
+## Related Tickets Context
+{tickets_context}
+
+## Previously Created PRs
+{pr_context}
 
 Rules:
 1. Generate clean, well-structured, production-ready code.
@@ -24,24 +31,28 @@ Rules:
 5. If the ticket is a User Story, implement it end-to-end.
 6. If the ticket is a Task, implement the specific task described.
 7. Generate test files where appropriate.
+8. If there is existing code in the repo that relates to this ticket, reference the existing file paths and build upon them rather than creating duplicate files.
+9. If a parent or sibling ticket has already been implemented (has a PR), make sure your implementation is compatible with and builds upon that work.
+10. Include updates to existing test files if applicable.
 
 Return ONLY valid JSON with this schema:
-{
+{{
   "files": [
-    {
+    {{
       "path": "src/path/to/file.py",
       "content": "full file content here",
       "description": "brief description of what this file does"
-    }
+    }}
   ],
   "summary": "Brief summary of what was implemented",
-  "pr_description": "Markdown description for the pull request"
-}
+  "pr_description": "Markdown description for the pull request",
+  "related_files_analyzed": ["list of existing repo files you considered"]
+}}
 """
 
 
 class DevAgent:
-    """AI-powered developer agent that creates code and PRs from tickets."""
+    """AI-powered developer agent with repo context and PR history awareness."""
 
     def __init__(self):
         ssl_ctx = truststore.SSLContext()
@@ -66,7 +77,7 @@ class DevAgent:
 
     def _gh_request(self, method, path, **kwargs):
         ssl_ctx = truststore.SSLContext()
-        with httpx.Client(verify=ssl_ctx) as client:
+        with httpx.Client(verify=ssl_ctx, timeout=30) as client:
             resp = client.request(
                 method,
                 f"{self.api_base}{path}",
@@ -151,10 +162,161 @@ class DevAgent:
             json={"title": title, "body": body, "head": branch, "base": base},
         )
 
+    # ── Repo Context & PR History ──────────────────────────
+
+    def list_prs(self, state: str = "all", per_page: int = 30) -> list[dict]:
+        """List PRs from the repo (open, closed, or all)."""
+        raw = self._gh_request(
+            "GET",
+            f"/repos/{self.owner}/{self.repo}/pulls",
+            params={"state": state, "per_page": per_page, "sort": "updated", "direction": "desc"},
+        )
+        return [
+            {
+                "number": pr["number"],
+                "title": pr["title"],
+                "state": pr["state"],
+                "merged": pr.get("merged_at") is not None,
+                "html_url": pr["html_url"],
+                "branch": pr["head"]["ref"],
+                "created_at": pr["created_at"],
+                "updated_at": pr["updated_at"],
+                "user": pr["user"]["login"],
+                "labels": [l["name"] for l in pr.get("labels", [])],
+            }
+            for pr in raw
+        ]
+
+    def _get_repo_tree(self) -> list[str]:
+        """Get the file tree of the repo's default branch."""
+        try:
+            default_branch = self._get_default_branch()
+            tree = self._gh_request(
+                "GET",
+                f"/repos/{self.owner}/{self.repo}/git/trees/{default_branch}",
+                params={"recursive": "1"},
+            )
+            return [item["path"] for item in tree.get("tree", []) if item["type"] == "blob"][:200]
+        except Exception:
+            return []
+
+    def get_repo_context(self) -> dict:
+        """Get full repo analysis for the frontend."""
+        try:
+            repo_info = self._gh_request("GET", f"/repos/{self.owner}/{self.repo}")
+        except Exception:
+            repo_info = {}
+
+        file_tree = self._get_repo_tree()
+        prs = self.list_prs(state="all", per_page=20)
+        open_prs = [p for p in prs if p["state"] == "open"]
+        closed_prs = [p for p in prs if p["state"] == "closed"]
+
+        return {
+            "repo": f"{self.owner}/{self.repo}",
+            "description": repo_info.get("description", ""),
+            "default_branch": repo_info.get("default_branch", "main"),
+            "language": repo_info.get("language", ""),
+            "file_tree": file_tree,
+            "file_count": len(file_tree),
+            "open_prs": open_prs,
+            "closed_prs": closed_prs,
+            "total_prs": len(prs),
+        }
+
+    def _build_repo_context_prompt(self) -> str:
+        """Build a concise repo context string for the LLM prompt."""
+        try:
+            file_tree = self._get_repo_tree()
+            prs = self.list_prs(state="all", per_page=15)
+
+            parts = [f"Repository: {self.owner}/{self.repo}"]
+            if file_tree:
+                parts.append(f"\nExisting files in repo ({len(file_tree)} total):")
+                for f in file_tree[:100]:
+                    parts.append(f"  - {f}")
+                if len(file_tree) > 100:
+                    parts.append(f"  ... and {len(file_tree) - 100} more files")
+
+            if prs:
+                parts.append(f"\nRecent PRs ({len(prs)} total):")
+                for pr in prs[:10]:
+                    status = "MERGED" if pr["merged"] else pr["state"].upper()
+                    parts.append(f"  - PR #{pr['number']} [{status}]: {pr['title']} (branch: {pr['branch']})")
+
+            return "\n".join(parts)
+        except Exception:
+            return f"Repository: {self.owner}/{self.repo} (could not fetch details)"
+
+    def _build_tickets_context(self, ticket: dict, all_tickets: list[dict] | None) -> str:
+        """Build context about related parent/child/sibling tickets."""
+        if not all_tickets:
+            return "No other ticket context available."
+
+        current_title = ticket["title"]
+        current_parent = ticket.get("parent_title", "")
+        parts = []
+
+        # Find parent ticket
+        if current_parent:
+            parent = next((t for t in all_tickets if t.get("title") == current_parent), None)
+            if parent:
+                status = "DONE (PR created)" if parent.get("_agent_status") == "done" else parent.get("_agent_status", "pending")
+                parts.append(f"PARENT TICKET [{status.upper()}]: [{parent.get('type')}] {parent['title']}")
+                if parent.get("description"):
+                    parts.append(f"  Description: {parent['description']}")
+
+        # Find sibling tickets (same parent)
+        siblings = [t for t in all_tickets if t.get("parent_title") == current_parent and t.get("title") != current_title]
+        if siblings:
+            parts.append(f"\nSIBLING TICKETS (same parent '{current_parent}'):")
+            for sib in siblings:
+                status = "DONE (PR created)" if sib.get("_agent_status") == "done" else sib.get("_agent_status", "pending")
+                parts.append(f"  - [{status.upper()}] [{sib.get('type')}] {sib['title']}")
+
+        # Find child tickets
+        children = [t for t in all_tickets if t.get("parent_title") == current_title]
+        if children:
+            parts.append(f"\nCHILD TICKETS:")
+            for child in children:
+                status = "DONE (PR created)" if child.get("_agent_status") == "done" else child.get("_agent_status", "pending")
+                parts.append(f"  - [{status.upper()}] [{child.get('type')}] {child['title']}")
+
+        if not parts:
+            return "This ticket has no related parent/child/sibling tickets."
+
+        return "\n".join(parts)
+
+    def _build_pr_context(self) -> str:
+        """Build a context string about existing PRs."""
+        try:
+            prs = self.list_prs(state="all", per_page=10)
+            if not prs:
+                return "No PRs exist yet in this repository."
+            parts = ["Previously created PRs:"]
+            for pr in prs:
+                status = "MERGED" if pr["merged"] else pr["state"].upper()
+                parts.append(f"  - PR #{pr['number']} [{status}]: {pr['title']}")
+            return "\n".join(parts)
+        except Exception:
+            return "Could not fetch PR history."
+
     # ── Main agent flow ────────────────────────────────────
 
-    def generate_code(self, ticket: dict) -> dict:
-        """Use LLM to generate code for the given ticket."""
+    def generate_code(self, ticket: dict, all_tickets: list[dict] | None = None) -> dict:
+        """Use LLM to generate code with full repo and ticket context."""
+        repo_context = self._build_repo_context_prompt()
+        tickets_context = self._build_tickets_context(ticket, all_tickets)
+        pr_context = self._build_pr_context()
+
+        system_prompt = CODE_GEN_PROMPT.format(
+            owner=self.owner,
+            repo=self.repo,
+            repo_context=repo_context,
+            tickets_context=tickets_context,
+            pr_context=pr_context,
+        )
+
         user_prompt = (
             f"Implement the following ticket:\n\n"
             f"**Type**: {ticket['type']}\n"
@@ -171,7 +333,7 @@ class DevAgent:
         response = self.llm.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": CODE_GEN_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.2,
@@ -181,13 +343,14 @@ class DevAgent:
         raw = response.choices[0].message.content or "{}"
         return json.loads(raw)
 
-    def execute(self, ticket: dict) -> dict:
-        """Full agent pipeline: generate code → branch → commit → PR."""
-        # 1. Generate code
-        gen_result = self.generate_code(ticket)
+    def execute(self, ticket: dict, all_tickets: list[dict] | None = None) -> dict:
+        """Full agent pipeline: analyze repo -> generate code -> branch -> commit -> PR."""
+        # 1. Generate code with full context
+        gen_result = self.generate_code(ticket, all_tickets)
         files = gen_result.get("files", [])
         summary = gen_result.get("summary", "AI-generated implementation")
         pr_body = gen_result.get("pr_description", summary)
+        analyzed_files = gen_result.get("related_files_analyzed", [])
 
         if not files:
             return {
@@ -200,24 +363,21 @@ class DevAgent:
         base_sha = self._get_branch_sha(default_branch)
         branch_name = self._sanitize_branch_name(ticket["title"])
 
-        # Check if branch already exists, append suffix if so
         try:
             self._get_branch_sha(branch_name)
-            import time
             branch_name = f"{branch_name}-{int(time.time()) % 10000}"
         except httpx.HTTPStatusError:
-            pass  # Branch doesn't exist, good
+            pass
 
         self._create_branch(branch_name, base_sha)
 
         # 3. Commit files
-        commit_msg = f"feat: {ticket['title']}\n\nImplemented by PO Copilot AI Agent\n\n{summary}"
+        commit_msg = f"feat: {ticket['title']}\n\nImplemented by PO Copilot AI Agent v0.2\n\n{summary}"
         self._commit_files(branch_name, files, commit_msg)
 
-        # 4. Open PR
-        pr_title = f"🤖 [{ticket['type']}] {ticket['title']}"
+        # 4. Build rich PR body
+        pr_title = f"\U0001f916 [{ticket['type']}] {ticket['title']}"
 
-        # Build ticket details section (like AD#1234 references)
         ticket_details = (
             f"| Field | Value |\n"
             f"|-------|-------|\n"
@@ -233,24 +393,54 @@ class DevAgent:
         if ticket.get("tags"):
             ticket_details += f"| **Tags** | {', '.join(ticket['tags'])} |\n"
 
+        # Build related tickets section
+        related_section = ""
+        if all_tickets:
+            parent = ticket.get("parent_title", "")
+            siblings = [t for t in all_tickets if t.get("parent_title") == parent and t.get("title") != ticket["title"]]
+            children = [t for t in all_tickets if t.get("parent_title") == ticket["title"]]
+
+            if parent or siblings or children:
+                related_section = "### \U0001f517 Related Tickets\n\n"
+                if parent:
+                    related_section += f"**Parent**: {parent}\n\n"
+                if siblings:
+                    related_section += "**Siblings** (same parent):\n"
+                    for s in siblings[:5]:
+                        status_emoji = "\u2705" if s.get("_agent_status") == "done" else "\u23f3"
+                        related_section += f"- {status_emoji} [{s.get('type')}] {s['title']}\n"
+                    related_section += "\n"
+                if children:
+                    related_section += "**Children**:\n"
+                    for c in children[:5]:
+                        status_emoji = "\u2705" if c.get("_agent_status") == "done" else "\u23f3"
+                        related_section += f"- {status_emoji} [{c.get('type')}] {c['title']}\n"
+                    related_section += "\n"
+
+        analyzed_section = ""
+        if analyzed_files:
+            analyzed_section = (
+                "### \U0001f50d Existing Files Analyzed\n\n"
+                + "\n".join(f"- `{f}`" for f in analyzed_files[:10])
+                + "\n\n"
+            )
+
         pr_body_full = (
-            f"## 🤖 AI Agent Implementation\n\n"
-            f"### 📋 Ticket Details\n\n"
+            f"## \U0001f916 AI Agent Implementation\n\n"
+            f"### \U0001f4cb Ticket Details\n\n"
             f"{ticket_details}\n"
             f"> **Description**: {ticket.get('description', 'N/A')}\n\n"
             f"---\n\n"
-            f"### 🔗 Hierarchy\n\n"
-            f"- **Parent**: {ticket.get('parent_title', 'None (top-level)')}\n"
-            f"- **Type**: {ticket['type']}\n"
-            f"- **Ticket**: {ticket['title']}\n\n"
+            f"{related_section}"
             f"---\n\n"
-            f"### 📝 Implementation Summary\n\n"
+            f"### \U0001f4dd Implementation Summary\n\n"
             f"{pr_body}\n\n"
             f"---\n\n"
-            f"### 📁 Files Changed\n\n"
-            + "\n".join(f"- `{f['path']}` — {f.get('description', '')}" for f in files)
+            f"{analyzed_section}"
+            f"### \U0001f4c1 Files Changed\n\n"
+            + "\n".join(f"- `{f['path']}` \u2014 {f.get('description', '')}" for f in files)
             + "\n\n---\n\n"
-            f"*🤖 This PR was automatically created by **PO Copilot AI Dev Agent** — Team Diamond × SKF*"
+            f"*\U0001f916 This PR was automatically created by **PO Copilot AI Dev Agent v0.2** \u2014 Team Diamond \u00d7 SKF*"
         )
 
         pr = self._create_pr(branch_name, pr_title, pr_body_full, default_branch)

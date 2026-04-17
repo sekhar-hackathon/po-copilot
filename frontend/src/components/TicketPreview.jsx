@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { runAgent, getGitHubStatus } from "../services/api";
+import React, { useState, useEffect, useRef } from "react";
+import { runAgent, getGitHubStatus, getRepoPRs } from "../services/api";
 
 /* ─── Constants ─── */
 const TYPE_TOP = {
@@ -167,21 +167,31 @@ function Card({ item, onEdit, onRemove, onAssignAgent, onStopAgent, agentState, 
 
 /* ─── Agent Activity Log ─── */
 function AgentLog({ entries }) {
+  const logRef = useRef(null);
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [entries]);
   if (entries.length === 0) return null;
   return (
     <div className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden">
-      <div className="px-4 py-2 bg-slate-800 flex items-center gap-2 border-b border-slate-700">
-        <div className="flex gap-1">
-          <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
-          <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
-          <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+      <div className="px-4 py-2 bg-slate-800 flex items-center justify-between border-b border-slate-700">
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1">
+            <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
+            <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+          </div>
+          <span className="text-xs text-slate-400 font-mono">Agent Activity Log</span>
         </div>
-        <span className="text-xs text-slate-400 font-mono">Agent Activity Log</span>
+        <span className="text-[9px] text-slate-500 font-mono">{entries.length} events</span>
       </div>
-      <div className="p-3 max-h-48 overflow-y-auto space-y-1 font-mono text-[11px]">
+      <div ref={logRef} className="p-3 max-h-56 overflow-y-auto space-y-1 font-mono text-[11px]">
         {entries.map((e, i) => (
           <div key={i} className={`flex items-start gap-2 ${e.type === "error" ? "text-red-400" : e.type === "success" ? "text-green-400" : "text-slate-400"}`}>
             <span className="text-slate-600 flex-shrink-0">{e.time}</span>
+            {e.ticketId && (
+              <span className="flex-shrink-0 px-1 py-0.5 rounded bg-slate-700 text-violet-300 text-[9px] font-bold">{e.ticketId}</span>
+            )}
             <span className={e.type === "success" ? "text-green-400" : e.type === "error" ? "text-red-400" : e.type === "info" ? "text-blue-400" : "text-slate-300"}>
               {e.message}
             </span>
@@ -193,18 +203,37 @@ function AgentLog({ entries }) {
 }
 
 /* ─── Main Board ─── */
+const STORAGE_KEYS = { cols: "poc_ticketColumns", states: "poc_agentStates", log: "poc_agentLog" };
+
+function loadJson(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+}
+
 export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, syncing, showToast }) {
   const [viewMode, setViewMode] = useState("board");
-  const [ticketColumns, setTicketColumns] = useState({});
-  const [agentStates, setAgentStates] = useState({}); // key -> idle|queued|working|done|failed
-  const [agentLog, setAgentLog] = useState([]);
+  const [ticketColumns, setTicketColumns] = useState(() => loadJson(STORAGE_KEYS.cols, {}));
+  const [agentStates, setAgentStates] = useState(() => loadJson(STORAGE_KEYS.states, {}));
+  const [agentLog, setAgentLog] = useState(() => loadJson(STORAGE_KEYS.log, []));
   const [gh, setGh] = useState(null);
-  const [abortControllers, setAbortControllers] = useState({}); // key -> AbortController
+  const [abortControllers, setAbortControllers] = useState({});
   const [stoppingAll, setStoppingAll] = useState(false);
+  const [prHistory, setPrHistory] = useState([]);
+
+  // Persist to localStorage
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.cols, JSON.stringify(ticketColumns)); }, [ticketColumns]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.states, JSON.stringify(agentStates)); }, [agentStates]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.log, JSON.stringify(agentLog)); }, [agentLog]);
 
   useEffect(() => {
     getGitHubStatus().then(setGh).catch(() => setGh({ configured: false }));
   }, []);
+
+  // Fetch PR history
+  useEffect(() => {
+    if (gh?.configured) {
+      getRepoPRs("all").then((data) => setPrHistory(data.prs || [])).catch(() => {});
+    }
+  }, [gh]);
 
   if (!hierarchy) return null;
 
@@ -218,8 +247,8 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
   const totalPts = allItems.reduce((s, i) => s + (i.story_points || 0), 0);
   const now = () => new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-  const addLog = (message, type = "info") => {
-    setAgentLog((prev) => [...prev, { time: now(), message, type }]);
+  const addLog = (message, type = "info", ticketId = null) => {
+    setAgentLog((prev) => [...prev, { time: now(), message, type, ticketId }]);
   };
 
   const key = (item) => `${item.type}::${item.title}`;
@@ -258,11 +287,12 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
       return;
     }
     const k = key(item);
+    const tid = item._ticketId;
     const controller = new AbortController();
     setAbortControllers((p) => ({ ...p, [k]: controller }));
     setAgentStates((p) => ({ ...p, [k]: "queued" }));
     moveTo(item, "assigned");
-    addLog(`🎯 Agent assigned to: ${item.title}`);
+    addLog(`🎯 Agent assigned to: ${item.title}`, "info", tid);
 
     // Brief delay to show queued state
     await new Promise((r) => setTimeout(r, 500));
@@ -270,21 +300,35 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
 
     setAgentStates((p) => ({ ...p, [k]: "working" }));
     moveTo(item, "in-progress");
-    addLog(`⚙️ Agent started working on: ${item.title}`);
-    addLog(`📖 Reading ticket requirements...`);
+    addLog(`⚙️ Agent started working on: ${item.title}`, "info", tid);
+    addLog(`🔍 Analyzing repo structure & related tickets...`, "info", tid);
 
     try {
-      const result = await runAgent({
-        type: item.type,
-        title: item.title,
-        description: item.description,
-        acceptance_criteria: item.acceptance_criteria,
-        parent_title: item.parent_title,
-        tags: item.tags,
-      });
+      // Build all_tickets with current agent statuses
+      const allTicketsWithStatus = allItems.map((t) => ({
+        type: t.type,
+        title: t.title,
+        description: t.description,
+        acceptance_criteria: t.acceptance_criteria,
+        parent_title: t.parent_title,
+        tags: t.tags,
+        _agent_status: agentStates[key(t)] || "idle",
+      }));
+
+      const result = await runAgent(
+        {
+          type: item.type,
+          title: item.title,
+          description: item.description,
+          acceptance_criteria: item.acceptance_criteria,
+          parent_title: item.parent_title,
+          tags: item.tags,
+        },
+        allTicketsWithStatus
+      );
 
       if (controller.signal.aborted) {
-        addLog(`⏹ Agent stopped for: ${item.title}`, "info");
+        addLog(`⏹ Agent stopped for: ${item.title}`, "info", tid);
         return;
       }
 
@@ -297,23 +341,25 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
         });
         setAgentStates((p) => ({ ...p, [k]: "done" }));
         moveTo(item, "done");
-        addLog(`✅ PR #${result.pr_number} created → ${result.files_created} files on branch ${result.branch}`, "success");
-        addLog(`🔗 ${result.pr_url}`, "success");
+        addLog(`✅ PR #${result.pr_number} created → ${result.files_created} files on branch ${result.branch}`, "success", tid);
+        addLog(`🔗 ${result.pr_url}`, "success", tid);
         showToast?.(`Agent created PR #${result.pr_number} with ${result.files_created} files`, "success");
+        // Refresh PR history
+        getRepoPRs("all").then((data) => setPrHistory(data.prs || [])).catch(() => {});
       } else {
         setAgentStates((p) => ({ ...p, [k]: "failed" }));
         moveTo(item, "backlog");
-        addLog(`❌ Agent failed: ${result.message || "Unknown error"}`, "error");
+        addLog(`❌ Agent failed: ${result.message || "Unknown error"}`, "error", tid);
         showToast?.(result.message || "Agent failed", "error");
       }
     } catch (err) {
       if (controller.signal.aborted) {
-        addLog(`⏹ Agent stopped for: ${item.title}`, "info");
+        addLog(`⏹ Agent stopped for: ${item.title}`, "info", tid);
         return;
       }
       setAgentStates((p) => ({ ...p, [k]: "failed" }));
       moveTo(item, "backlog");
-      addLog(`❌ Error: ${err.response?.data?.detail || err.message}`, "error");
+      addLog(`❌ Error: ${err.response?.data?.detail || err.message}`, "error", tid);
       showToast?.(err.response?.data?.detail || "Agent failed", "error");
     } finally {
       setAbortControllers((p) => { const c = { ...p }; delete c[k]; return c; });
@@ -359,6 +405,7 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
     setAgentStates({});
     setAgentLog([]);
     setAbortControllers({});
+    Object.values(STORAGE_KEYS).forEach((k) => localStorage.removeItem(k));
     showToast?.("Board reset", "info");
   };
 
@@ -476,6 +523,33 @@ export default function TicketPreview({ hierarchy, onUpdate, onRemove, onSync, s
 
       {/* ─── Agent Activity Log ─── */}
       {agentLog.length > 0 && <AgentLog entries={agentLog} />}
+
+      {/* ─── PR History Panel ─── */}
+      {prHistory.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+          <div className="px-4 py-2 bg-gradient-to-r from-slate-50 to-indigo-50 flex items-center justify-between border-b border-slate-200">
+            <span className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5 text-indigo-500" fill="currentColor" viewBox="0 0 16 16"><path d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z" /></svg>
+              PR History
+            </span>
+            <span className="text-[10px] text-slate-500">{prHistory.length} PRs</span>
+          </div>
+          <div className="p-2 flex gap-2 flex-wrap max-h-32 overflow-y-auto">
+            {prHistory.map((pr) => (
+              <a key={pr.number} href={pr.html_url} target="_blank" rel="noopener noreferrer"
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-colors ${
+                  pr.merged ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100" :
+                  pr.state === "open" ? "bg-green-50 text-green-700 border-green-200 hover:bg-green-100" :
+                  "bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100"
+                }`}>
+                <span>{pr.merged ? "🟣" : pr.state === "open" ? "🟢" : "⚫"}</span>
+                <span>#{pr.number}</span>
+                <span className="max-w-[180px] truncate">{pr.title}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ─── BOARD VIEW ─── */}
       {viewMode === "board" && (

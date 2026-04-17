@@ -52,6 +52,7 @@ class ADOSyncResult(BaseModel):
 
 class AgentRequest(BaseModel):
     ticket: dict
+    all_tickets: Optional[list[dict]] = None
 
 
 class AgentResult(BaseModel):

@@ -57,7 +57,17 @@ export async function getGitHubStatus() {
   return res.data;
 }
 
-export async function runAgent(ticket) {
-  const res = await API.post("/api/agent/run", { ticket }, { timeout: 120000 });
+export async function getRepoPRs(state = "all") {
+  const res = await API.get("/api/github/prs", { params: { state } });
+  return res.data;
+}
+
+export async function getRepoContext() {
+  const res = await API.get("/api/github/repo-context");
+  return res.data;
+}
+
+export async function runAgent(ticket, allTickets = null) {
+  const res = await API.post("/api/agent/run", { ticket, all_tickets: allTickets }, { timeout: 120000 });
   return res.data;
 }
